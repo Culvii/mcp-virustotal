@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -11,6 +11,7 @@ import axios from 'axios';
 import dotenv from "dotenv";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { logToFile } from './utils/logging.js';
+import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import {
   GetUrlReportArgsSchema,
   GetUrlRelationshipArgsSchema,
@@ -37,6 +38,29 @@ const API_KEY = process.env.VIRUSTOTAL_API_KEY;
 if (!API_KEY) {
   throw new Error("VIRUSTOTAL_API_KEY environment variable is required");
 }
+
+// In-memory map to track active transports by sessionId
+const transportMap = new Map<string, SSEServerTransport>()
+
+// Track session creation time for cleanup
+const sessionTimestamps = new Map<string, number>()
+
+// Cleanup old sessions (older than 5 minutes)
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000
+
+function cleanupOldSessions() {
+  const now = Date.now()
+  for (const [sessionId, timestamp] of sessionTimestamps.entries()) {
+    if (now - timestamp > SESSION_TIMEOUT_MS) {
+      console.error(`[SSE] Cleaning up old session: ${sessionId}`)
+      transportMap.delete(sessionId)
+      sessionTimestamps.delete(sessionId)
+    }
+  }
+}
+
+// Run cleanup every minute
+setInterval(cleanupOldSessions, 60 * 1000)
 
 // Server Setup
 const server = new Server(
@@ -182,18 +206,196 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Start the Server
-async function runServer() {
-  logToFile("Starting VirusTotal MCP Server...");
+async function main() {
+  const port = process.env.PORT ? parseInt(process.env.PORT) : 3000
+  const host = process.env.HOST || 'localhost'
 
-  try {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    logToFile("VirusTotal MCP Server is running.");
-  } catch (error: any) {
-    logToFile(`Error connecting server: ${error.message}`);
-    process.exit(1);
-  }
+  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    console.error(`[HTTP] ${req.method} ${req.url} - ${new Date().toISOString()}`)
+
+    // Health check endpoint
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        service: 'virustotal-mcp',
+        activeSessions: Array.from(transportMap.keys()),
+        totalSessions: transportMap.size,
+        sessionTimestamps: Object.fromEntries(sessionTimestamps),
+      }))
+    }
+
+    // Debug endpoint for session management
+    else if (req.method === 'GET' && req.url === '/debug/sessions') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        activeSessions: Array.from(transportMap.keys()),
+        totalSessions: transportMap.size,
+        sessionTimestamps: Object.fromEntries(sessionTimestamps),
+        timestamp: new Date().toISOString(),
+      }))
+    }
+
+    // Handle SSE GET connection
+    else if (req.method === 'GET' && req.url?.startsWith('/sse')) {
+      const urlObj = new URL(req.url, `http://${req.headers.host}`)
+      let sessionId = urlObj.searchParams.get('sessionId')
+
+      // Generate a session ID if not provided
+      if (!sessionId) {
+        sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        console.error('[SSE] No sessionId provided, generated:', sessionId)
+      } else {
+        console.error('[SSE] Using provided sessionId:', sessionId)
+      }
+
+      console.error('[SSE] New SSE connection established for session:', sessionId)
+
+      try {
+        const transport = new SSEServerTransport('/sse', res)
+        transportMap.set(sessionId, transport)
+        sessionTimestamps.set(sessionId, Date.now())
+        console.error(`[SSE] Transport stored in map. Total sessions: ${transportMap.size}`)
+
+        console.error('[SSE] Transport created, connecting to server...')
+        await server.connect(transport)
+        console.error('[SSE] Server connected, starting transport...')
+        console.error('[SSE] Transport started successfully')
+        
+        // Set up cleanup when the connection closes
+        res.on('close', () => {
+          console.error(`[SSE] Connection closed for session: ${sessionId}`)
+          transportMap.delete(sessionId)
+          sessionTimestamps.delete(sessionId)
+          console.error(`[SSE] Transport removed from map. Remaining sessions: ${transportMap.size}`)
+        })
+        
+        res.on('error', (error) => {
+          console.error(`[SSE] Connection error for session ${sessionId}:`, error)
+          transportMap.delete(sessionId)
+          sessionTimestamps.delete(sessionId)
+          console.error(`[SSE] Transport removed from map due to error. Remaining sessions: ${transportMap.size}`)
+        })
+      } catch (error) {
+        console.error('[SSE] Error in SSE connection:', error)
+        transportMap.delete(sessionId)
+        sessionTimestamps.delete(sessionId)
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'SSE connection failed' }))
+        }
+      }
+    }
+
+    // Handle SSE POST messages
+    else if (req.method === 'POST' && req.url?.startsWith('/sse')) {
+      let sessionId: string | undefined
+      let originalSessionId: string | undefined
+
+      try {
+        const urlObj = new URL(req.url, `http://${req.headers.host}`)
+        sessionId = urlObj.searchParams.get('sessionId') || undefined
+        originalSessionId = sessionId
+      } catch {}
+
+      // If no sessionId in POST, try to find the first available transport
+      if (!sessionId) {
+        console.error(`[SSE] POST /sse received without sessionId, looking for available transport`)
+        const availableSessions = Array.from(transportMap.keys())
+        if (availableSessions.length > 0) {
+          sessionId = availableSessions[0]
+          console.error(`[SSE] Using first available session: ${sessionId}`)
+        }
+      }
+
+      if (!sessionId) {
+        console.error(`[SSE] No sessionId provided and no available transports`)
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'No SSE connection established' }))
+        return
+      }
+
+      let transport = transportMap.get(sessionId)
+      let usedSessionId = sessionId
+
+      // If the specific session is not found, try to use any available transport
+      if (!transport) {
+        console.error(`[SSE] No transport found for session: ${sessionId}`)
+        console.error(`[SSE] Available sessions: ${Array.from(transportMap.keys()).join(', ')}`)
+        console.error(`[SSE] Total active sessions: ${transportMap.size}`)
+        
+        // Try to use the first available transport as a fallback
+        const availableSessions = Array.from(transportMap.keys())
+        if (availableSessions.length > 0) {
+          const fallbackSessionId = availableSessions[0]
+          transport = transportMap.get(fallbackSessionId)
+          usedSessionId = fallbackSessionId
+          console.error(`[SSE] Using fallback session: ${fallbackSessionId}`)
+          
+          // Update the session timestamp to keep it alive
+          sessionTimestamps.set(fallbackSessionId, Date.now())
+        }
+      } else {
+        // Update the session timestamp to keep it alive
+        sessionTimestamps.set(sessionId, Date.now())
+      }
+
+      if (!transport) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ 
+          error: 'SSE connection not established',
+          availableSessions: Array.from(transportMap.keys()),
+          totalSessions: transportMap.size,
+          requestedSession: originalSessionId,
+          usedSession: usedSessionId
+        }))
+        return
+      }
+
+      try {
+        await transport.handlePostMessage(req, res)
+        console.error(`[SSE] POST message handled successfully for session: ${usedSessionId}`)
+      } catch (error) {
+        console.error(`[SSE] Error handling POST message for session ${usedSessionId}:`, error)
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'POST message handling failed' }))
+        }
+      }
+    }
+
+    // 404 fallback
+    else {
+      console.error(`[HTTP] 404 - Not Found: ${req.method} ${req.url}`)
+      res.writeHead(404)
+      res.end('Not Found')
+    }
+  })
+
+  httpServer.listen(port, host, () => {
+    console.error(`[SERVER] VirusTotal MCP server starting...`)
+    console.error(`[SERVER] Server running on SSE at http://${host}:${port}/sse`)
+    console.error(`[SERVER] Health check available at http://${host}:${port}/health`)
+    console.error(`[SERVER] Debug sessions available at http://${host}:${port}/debug/sessions`)
+    console.error(`[SERVER] Server started at ${new Date().toISOString()}`)
+  })
+
+  process.on('SIGINT', () => {
+    console.error('[SERVER] Received SIGINT, shutting down gracefully...')
+    httpServer.close(() => {
+      console.error('[SERVER] Server closed')
+      process.exit(0)
+    })
+  })
+
+  process.on('SIGTERM', () => {
+    console.error('[SERVER] Received SIGTERM, shutting down gracefully...')
+    httpServer.close(() => {
+      console.error('[SERVER] Server closed')
+      process.exit(0)
+    })
+  })
 }
 
 // Handle process events
@@ -207,7 +409,7 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-runServer().catch((error: any) => {
+main().catch((error: any) => {
   logToFile(`Fatal error: ${error.message}`);
   process.exit(1);
 });

@@ -8,7 +8,50 @@ A Model Context Protocol (MCP) server for querying the [VirusTotal API](https://
 
 ## Quick Start (Recommended)
 
-### Installing via Smithery
+### SSE Transport (New)
+
+The VirusTotal MCP server now supports Server-Sent Events (SSE) transport for better integration with web-based MCP clients.
+
+#### Starting the SSE Server
+
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Create a `.env` file with your VirusTotal API key:
+```bash
+echo "VIRUSTOTAL_API_KEY=your-virustotal-api-key" > .env
+```
+
+3. Start the SSE server:
+```bash
+# Using the start script
+./start-virustotal.sh
+
+# Or manually
+npm run dev
+```
+
+The server will start on `http://localhost:3000/sse` with the following endpoints:
+- **SSE Endpoint**: `http://localhost:3000/sse`
+- **Health Check**: `http://localhost:3000/health`
+- **Debug Sessions**: `http://localhost:3000/debug/sessions`
+
+#### Testing the SSE Server
+
+Test the server using the included test client:
+```bash
+npm run test
+# Or test with a specific URL
+npm run test https://www.example.com
+```
+
+### Stdio Transport (Legacy)
+
+For traditional stdio-based MCP clients like Claude Desktop:
+
+#### Installing via Smithery
 
 To install VirusTotal Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@burtthecoder/mcp-virustotal):
 
@@ -16,7 +59,7 @@ To install VirusTotal Server for Claude Desktop automatically via [Smithery](htt
 npx -y @smithery/cli install @burtthecoder/mcp-virustotal --client claude
 ```
 
-### Installing Manually
+#### Installing Manually
 
 1. Install the server globally via npm:
 ```bash
@@ -180,9 +223,35 @@ If you see ES module loading warnings:
 
 ## Development
 
-To run in development mode with hot reloading:
+### SSE Development
+
+To run the SSE server in development mode with hot reloading:
 ```bash
 npm run dev
+```
+
+The server will be available at `http://localhost:3000/sse` and will automatically reload when you make changes to the source code.
+
+### Testing
+
+Test the SSE server:
+```bash
+# Test with default URL (https://www.google.com)
+npm run test
+
+# Test with a specific URL
+npm run test https://www.example.com
+
+# Test with a specific file hash
+npm run test -- --file-hash 44d88612fea8a8f36de82e1278abb02f
+```
+
+### Stdio Development
+
+For stdio-based development (legacy):
+```bash
+npm run build
+npm start
 ```
 
 ## Error Handling

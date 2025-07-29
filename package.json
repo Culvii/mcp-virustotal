@@ -13,9 +13,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod +x build/index.js",
+    "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsc -w",
+    "dev": "tsx watch src/index.ts",
+    "test": "tsx src/test-client.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -33,7 +34,7 @@
     "url": "git+https://github.com/BurtTheCoder/mcp-virustotal.git"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.0.3",
+    "@modelcontextprotocol/sdk": "^0.6.0",
     "axios": "^1.4.0",
     "dotenv": "^16.4.5",
     "zod": "^3.22.2",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
+    "tsx": "^4.20.3",
     "typescript": "^5.3.3"
   }
 }
