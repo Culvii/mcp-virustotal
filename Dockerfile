@@ -23,12 +23,18 @@ FROM node:18-alpine AS runner
 # Set the working directory
 WORKDIR /app
 
-# Copy the build output and node_modules from the builder stage
+# Copy the build output, node_modules, and package.json from the builder stage
 COPY --from=builder /app/build /app/build
 COPY --from=builder /app/node_modules /app/node_modules
+COPY --from=builder /app/package.json /app/package.json
 
 # Set environment variables (the API key should be set as an environment variable at runtime)
 ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOST=0.0.0.0
+
+# Expose the port for the SSE server
+EXPOSE 3000
 
 # Define the command to run the application
 ENTRYPOINT ["node", "build/index.js"]
