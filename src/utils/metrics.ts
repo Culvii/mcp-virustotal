@@ -16,7 +16,7 @@ export const httpRequestsTotal = new Counter({
 
 // Function to increment the counter
 export function incrementHttpRequests(method: string, endpoint: string, statusCode: number) {
-  httpRequestsTotal.inc({ method, endpoint, statusCode });
+  httpRequestsTotal.inc({ method, endpoint, status_code: statusCode });
 }
 
 // Function to get metrics as text
