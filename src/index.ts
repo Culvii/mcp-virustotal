@@ -12,6 +12,7 @@ import dotenv from "dotenv";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { logToFile } from './utils/logging.js';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import { incrementHttpRequests, getMetrics } from './utils/metrics.js';
 import {
   GetUrlReportArgsSchema,
   GetUrlRelationshipArgsSchema,
@@ -216,6 +217,7 @@ async function main() {
     // Health check endpoint
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
+      incrementHttpRequests('GET', '/health', 200)
       res.end(JSON.stringify({
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -226,9 +228,25 @@ async function main() {
       }))
     }
 
+    // Metrics endpoint
+    else if (req.method === 'GET' && req.url === '/metrics') {
+      try {
+        const metrics = await getMetrics()
+        res.writeHead(200, { 'Content-Type': 'text/plain' })
+        incrementHttpRequests('GET', '/metrics', 200)
+        res.end(metrics)
+      } catch (error) {
+        console.error('[METRICS] Error getting metrics:', error)
+        res.writeHead(500, { 'Content-Type': 'text/plain' })
+        incrementHttpRequests('GET', '/metrics', 500)
+        res.end('Error getting metrics')
+      }
+    }
+
     // Debug endpoint for session management
     else if (req.method === 'GET' && req.url === '/debug/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
+      incrementHttpRequests('GET', '/debug/sessions', 200)
       res.end(JSON.stringify({
         activeSessions: Array.from(transportMap.keys()),
         totalSessions: transportMap.size,
@@ -251,6 +269,7 @@ async function main() {
       }
 
       console.error('[SSE] New SSE connection established for session:', sessionId)
+      incrementHttpRequests('GET', '/sse', 200)
 
       try {
         const transport = new SSEServerTransport('/sse', res)
@@ -312,6 +331,7 @@ async function main() {
       if (!sessionId) {
         console.error(`[SSE] No sessionId provided and no available transports`)
         res.writeHead(400, { 'Content-Type': 'application/json' })
+        incrementHttpRequests('POST', '/sse', 400)
         res.end(JSON.stringify({ error: 'No SSE connection established' }))
         return
       }
@@ -343,6 +363,7 @@ async function main() {
 
       if (!transport) {
         res.writeHead(400, { 'Content-Type': 'application/json' })
+        incrementHttpRequests('POST', '/sse', 400)
         res.end(JSON.stringify({ 
           error: 'SSE connection not established',
           availableSessions: Array.from(transportMap.keys()),
@@ -356,10 +377,12 @@ async function main() {
       try {
         await transport.handlePostMessage(req, res)
         console.error(`[SSE] POST message handled successfully for session: ${usedSessionId}`)
+        incrementHttpRequests('POST', '/sse', 200)
       } catch (error) {
         console.error(`[SSE] Error handling POST message for session ${usedSessionId}:`, error)
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' })
+          incrementHttpRequests('POST', '/sse', 500)
           res.end(JSON.stringify({ error: 'POST message handling failed' }))
         }
       }
@@ -369,6 +392,7 @@ async function main() {
     else {
       console.error(`[HTTP] 404 - Not Found: ${req.method} ${req.url}`)
       res.writeHead(404)
+      incrementHttpRequests(req.method || 'UNKNOWN', req.url || '/unknown', 404)
       res.end('Not Found')
     }
   })
@@ -377,6 +401,7 @@ async function main() {
     console.error(`[SERVER] VirusTotal MCP server starting...`)
     console.error(`[SERVER] Server running on SSE at http://${host}:${port}/sse`)
     console.error(`[SERVER] Health check available at http://${host}:${port}/health`)
+    console.error(`[SERVER] Metrics available at http://${host}:${port}/metrics`)
     console.error(`[SERVER] Debug sessions available at http://${host}:${port}/debug/sessions`)
     console.error(`[SERVER] Server started at ${new Date().toISOString()}`)
   })
