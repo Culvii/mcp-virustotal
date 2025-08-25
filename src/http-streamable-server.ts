@@ -46,7 +46,14 @@ async function handleMCPRequest(request: JSONRPCRequest): Promise<JSONRPCRespons
       switch (request.method) {
         case 'notifications/initialized':
           logToFile("[HTTP] Received initialized notification");
-          return null; // No response needed for notifications
+          return {
+            jsonrpc: "2.0",
+            id: 0, // Use 0 as a placeholder ID for notifications
+            result: {
+              message: "Initialized notification received",
+              timestamp: new Date().toISOString()
+            }
+          };
         case 'notifications/exit':
           logToFile("[HTTP] Received exit notification");
           return null; // No response needed for notifications
@@ -250,23 +257,10 @@ app.post('/', async (req: Request, res: Response) => {
     if (response === null) {
       logToFile("[HTTP] Notification received, sending notification response");
       console.log("[HTTP] Notification received, sending notification response");
-      
-      // Check if this was an initialized notification
-      if (request.method === 'notifications/initialized') {
-        res.set('Content-Type', 'application/json');
-        res.json({
-          jsonrpc: "2.0",
-          result: {
-            message: "Initialized notification received",
-            timestamp: new Date().toISOString()
-          }
-        });
-      } else {
-        res.json({
-          jsonrpc: "2.0",
-          result: null
-        });
-      }
+      res.json({
+        jsonrpc: "2.0",
+        result: null
+      });
       return;
     }
     
