@@ -250,10 +250,23 @@ app.post('/', async (req: Request, res: Response) => {
     if (response === null) {
       logToFile("[HTTP] Notification received, sending notification response");
       console.log("[HTTP] Notification received, sending notification response");
-      res.json({
-        jsonrpc: "2.0",
-        result: null
-      });
+      
+      // Check if this was an initialized notification
+      if (request.method === 'notifications/initialized') {
+        res.set('Content-Type', 'application/json');
+        res.json({
+          jsonrpc: "2.0",
+          result: {
+            message: "Initialized notification received",
+            timestamp: new Date().toISOString()
+          }
+        });
+      } else {
+        res.json({
+          jsonrpc: "2.0",
+          result: null
+        });
+      }
       return;
     }
     
