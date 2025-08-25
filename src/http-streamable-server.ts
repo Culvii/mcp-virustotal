@@ -11,6 +11,7 @@ import axios from 'axios';
 import dotenv from "dotenv";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { logToFile } from './utils/logging.js';
+import { setupMetrics, recordHttpRequest, getMetrics } from './utils/metrics.js';
 import {
   GetUrlReportArgsSchema,
   GetUrlRelationshipArgsSchema,
@@ -199,6 +200,16 @@ const transport = new StreamableHTTPTransport();
 const app = express();
 app.use(express.json());
 
+// Middleware to record HTTP requests
+app.use((req: Request, res: Response, next) => {
+  const originalSend = res.send;
+  res.send = function(data) {
+    recordHttpRequest(req.method, req.path, res.statusCode);
+    return originalSend.call(this, data);
+  };
+  next();
+});
+
 // POST / (streamable HTTP endpoint)
 app.post('/', async (req: Request, res: Response) => {
   logToFile(`[HTTP] POST / received: ${JSON.stringify(req.body)}`);
@@ -233,11 +244,27 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
+// Metrics endpoint for Prometheus
+app.get('/metrics', async (req: Request, res: Response) => {
+  try {
+    const metrics = await getMetrics();
+    res.set('Content-Type', 'text/plain');
+    res.send(metrics);
+  } catch (error: any) {
+    res.status(500).send(`Error collecting metrics: ${error.message}`);
+  }
+});
+
 async function runHttpServer() {
   const port = process.env.PORT || 3001;
   logToFile("[HTTP] Starting VirusTotal MCP Streamable HTTP Server...");
   console.log("[HTTP] Starting VirusTotal MCP Streamable HTTP Server...");
   try {
+    // Setup Prometheus metrics
+    await setupMetrics();
+    logToFile("[HTTP] Prometheus metrics initialized");
+    console.log("[HTTP] Prometheus metrics initialized");
+    
     await server.connect(transport);
     logToFile("[HTTP] MCP server connected to transport");
     console.log("[HTTP] MCP server connected to transport");
@@ -245,6 +272,7 @@ async function runHttpServer() {
       logToFile(`[HTTP] VirusTotal MCP HTTP Server is running on port ${port}`);
       console.log(`[HTTP] VirusTotal MCP HTTP Server is running on port ${port}`);
       console.log(`[HTTP] Health check: http://localhost:${port}/health`);
+      console.log(`[HTTP] Metrics endpoint: http://localhost:${port}/metrics`);
       console.log(`[HTTP] MCP endpoint: POST http://localhost:${port}/`);
     });
   } catch (error: any) {
