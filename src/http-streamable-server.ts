@@ -155,11 +155,12 @@ class StreamableHTTPTransport {
 
   async send(message: JSONRPCMessage): Promise<void> {
     // For responses, call the response handler
-    if ('id' in message && message.id !== undefined) {
-      const handler = this.responseHandlers[message.id.toString()];
+    if ('id' in message && message.id !== undefined && message.id !== null) {
+      const id = message.id.toString();
+      const handler = this.responseHandlers[id];
       if (handler) {
         handler(message as JSONRPCResponse);
-        delete this.responseHandlers[message.id.toString()];
+        delete this.responseHandlers[id];
       }
     }
   }
@@ -179,7 +180,8 @@ class StreamableHTTPTransport {
   // Send a request and wait for response
   async sendRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
     return new Promise((resolve, reject) => {
-      const id = request.id.toString();
+      // Handle cases where request.id might be undefined or null
+      const id = request.id !== undefined && request.id !== null ? request.id.toString() : 'null';
       this.responseHandlers[id] = resolve;
       // Timeout after 30 seconds
       setTimeout(() => {
@@ -214,22 +216,55 @@ app.use((req: Request, res: Response, next) => {
 app.post('/', async (req: Request, res: Response) => {
   logToFile(`[HTTP] POST / received: ${JSON.stringify(req.body)}`);
   console.log(`[HTTP] POST / received: ${JSON.stringify(req.body)}`);
+  
+  // Validate request body
+  if (!req.body || typeof req.body !== 'object') {
+    return res.status(400).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32600,
+        message: 'Invalid Request',
+        data: 'Request body must be a valid JSON object'
+      },
+      id: null
+    });
+  }
+  
   try {
     const request = req.body as JSONRPCRequest;
+    
+    // Validate JSON-RPC request structure
+    if (!request.jsonrpc || request.jsonrpc !== '2.0') {
+      return res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32600,
+          message: 'Invalid Request',
+          data: 'Invalid JSON-RPC version'
+        },
+        id: request.id || null
+      });
+    }
+    
     // Send request through the transport and wait for response
     const response = await transport.sendRequest(request);
     logToFile(`[HTTP] Sending response: ${JSON.stringify(response)}`);
     console.log(`[HTTP] Sending response: ${JSON.stringify(response)}`);
     res.json(response);
   } catch (error: any) {
-    logToFile(`[HTTP] Error handling request: ${error.message}`);
-    console.log(`[HTTP] Error handling request: ${error.message}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    logToFile(`[HTTP] Error handling request: ${errorMessage}`);
+    console.log(`[HTTP] Error handling request: ${errorMessage}`);
+    if (errorStack) {
+      logToFile(`[HTTP] Error stack: ${errorStack}`);
+    }
     res.status(500).json({
       jsonrpc: '2.0',
       error: {
         code: -32603,
         message: 'Internal error',
-        data: error.message
+        data: errorMessage
       },
       id: req.body?.id || null
     });
@@ -268,6 +303,20 @@ async function runHttpServer() {
     await server.connect(transport);
     logToFile("[HTTP] MCP server connected to transport");
     console.log("[HTTP] MCP server connected to transport");
+    
+    // Set up message handling
+    transport.onmessage = async (message) => {
+      try {
+        logToFile(`[HTTP] Transport received message: ${JSON.stringify(message)}`);
+        const response = await server.handleRequest(message);
+        if (response) {
+          await transport.send(response);
+        }
+      } catch (error: any) {
+        logToFile(`[HTTP] Error handling transport message: ${error.message}`);
+        console.error(`[HTTP] Error handling transport message:`, error);
+      }
+    };
     app.listen(port, () => {
       logToFile(`[HTTP] VirusTotal MCP HTTP Server is running on port ${port}`);
       console.log(`[HTTP] VirusTotal MCP HTTP Server is running on port ${port}`);
