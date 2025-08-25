@@ -246,11 +246,11 @@ app.post('/', async (req: Request, res: Response) => {
     // Handle the MCP request directly
     const response = await handleMCPRequest(request);
     
-    // If response is null, this was a notification - no response needed
+    // If response is null, this was a notification - send empty JSON response
     if (response === null) {
-      logToFile("[HTTP] Notification received, no response needed");
-      console.log("[HTTP] Notification received, no response needed");
-      res.status(204).end(); // No content response for notifications
+      logToFile("[HTTP] Notification received, sending empty response");
+      console.log("[HTTP] Notification received, sending empty response");
+      res.json({}); // Send empty JSON object for notifications
       return;
     }
     
