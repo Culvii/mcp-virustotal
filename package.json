@@ -13,8 +13,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod +x build/index.js",
-    "start": "node build/index.js",
+    "build": "tsc && chmod +x build/http-streamable-server.js",
+    "start": "node build/http-streamable-server.js",
     "dev": "tsc -w",
     "prepublishOnly": "npm run build"
   },
@@ -36,11 +36,14 @@
     "@modelcontextprotocol/sdk": "1.0.3",
     "axios": "^1.4.0",
     "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "prom-client": "^15.1.0",
     "zod": "^3.22.2",
     "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "@types/node": "^20.11.24",
-    "typescript": "^5.3.3"
+    "typescript": "^5.9.2"
   }
 }
