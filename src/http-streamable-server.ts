@@ -37,10 +37,26 @@ const axiosInstance = axios.create({
 });
 
 // --- HTTP Request Handler ---
-async function handleMCPRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+async function handleMCPRequest(request: JSONRPCRequest): Promise<JSONRPCResponse | null> {
   try {
     logToFile(`[HTTP] Processing MCP request: ${request.method}`);
     
+    // Handle notifications (requests without IDs)
+    if (request.id === undefined || request.id === null) {
+      switch (request.method) {
+        case 'notifications/initialized':
+          logToFile("[HTTP] Received initialized notification");
+          return null; // No response needed for notifications
+        case 'notifications/exit':
+          logToFile("[HTTP] Received exit notification");
+          return null; // No response needed for notifications
+        default:
+          logToFile(`[HTTP] Unknown notification method: ${request.method}`);
+          return null; // No response needed for notifications
+      }
+    }
+    
+    // Handle regular requests (with IDs)
     switch (request.method) {
       case 'initialize':
         return {
@@ -159,17 +175,24 @@ async function handleMCPRequest(request: JSONRPCRequest): Promise<JSONRPCRespons
     const errorMessage = error instanceof Error ? error.message : String(error);
     logToFile(`[HTTP] Error handling MCP request: ${errorMessage}`);
     
-    return {
-      jsonrpc: '2.0',
-      id: request.id,
-      result: {
-        error: {
-          code: -32603,
-          message: 'Internal error',
-          data: errorMessage
+    // Only return error response if this is a request (has ID), not a notification
+    if (request.id !== undefined && request.id !== null) {
+      return {
+        jsonrpc: '2.0',
+        id: request.id,
+        result: {
+          error: {
+            code: -32603,
+            message: 'Internal error',
+            data: errorMessage
+          }
         }
-      }
-    };
+      };
+    }
+    
+    // For notifications, just log the error and return null
+    logToFile(`[HTTP] Error in notification ${request.method}: ${errorMessage}`);
+    return null;
   }
 }
 
@@ -222,6 +245,15 @@ app.post('/', async (req: Request, res: Response) => {
     
     // Handle the MCP request directly
     const response = await handleMCPRequest(request);
+    
+    // If response is null, this was a notification - no response needed
+    if (response === null) {
+      logToFile("[HTTP] Notification received, no response needed");
+      console.log("[HTTP] Notification received, no response needed");
+      res.status(204).end(); // No content response for notifications
+      return;
+    }
+    
     logToFile(`[HTTP] Sending response: ${JSON.stringify(response)}`);
     console.log(`[HTTP] Sending response: ${JSON.stringify(response)}`);
     res.json(response);
