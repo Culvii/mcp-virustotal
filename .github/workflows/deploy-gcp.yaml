@@ -1,0 +1,55 @@
+on:
+  push:
+    branches:
+      - aditya-http
+      - aditya-sse
+
+name: Build and Push to GCP Artifact Registry
+
+env:
+  GCP_REGION: us-central1
+  GCP_PROJECT_ID: non-production-488007
+  CONTAINER_IMAGE: virustotal-mcp
+  ARTIFACT_REGISTRY_REPO: culvii-container
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+
+      - name: Extract Git short hash
+        run: |
+          echo "IMAGE_TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build the image
+        run: |
+          docker build --no-cache -t $CONTAINER_IMAGE:$IMAGE_TAG .
+
+      - name: Tag the image
+        run: |
+          docker tag $CONTAINER_IMAGE:$IMAGE_TAG ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/$CONTAINER_IMAGE:$IMAGE_TAG
+
+      - name: Push image
+        run: |
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/$CONTAINER_IMAGE:$IMAGE_TAG
